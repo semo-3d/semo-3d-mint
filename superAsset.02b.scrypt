@@ -1,0 +1,42 @@
+// ASM Template
+// <assetId 36 bytes> OP_DROP <hash160 20 bytes> OP_DROP OP_4 OP_PICK 68 OP_SPLIT OP_NIP 0 OP_PICK OP_3 OP_SPLIT OP_DROP OP_1 OP_SPLIT OP_NIP 00 OP_CAT OP_BIN2NUM OP_1 OP_PICK OP_3 OP_2 OP_PICK OP_ADD OP_SPLIT OP_DROP OP_3 OP_SPLIT OP_NIP OP_3 OP_PICK OP_HASH160 OP_1 OP_PICK 3b OP_SPLIT OP_DROP 27 OP_SPLIT OP_NIP OP_EQUAL OP_VERIFY OP_4 OP_PICK OP_4 OP_PICK OP_CHECKSIG OP_VERIFY OP_7 OP_PICK OP_SIZE OP_NIP OP_NOP OP_8 OP_PICK OP_HASH256 OP_1 OP_SPLIT OP_SWAP OP_BIN2NUM OP_1ADD OP_SWAP OP_CAT 3044022079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817980220 OP_SWAP OP_CAT c3 OP_CAT 02b405d7f0322a89d0f9f3a98e6f938fdc1c969a8d1382a2bf66a71ae74a1e83b0 OP_CHECKSIG OP_NOP OP_VERIFY OP_7 OP_PICK OP_NOT OP_IF OP_8 OP_PICK OP_1 OP_PICK 2c OP_SUB OP_SPLIT OP_DROP OP_1 OP_PICK 34 OP_SUB OP_SPLIT OP_NIP OP_2 OP_PICK 25 OP_SPLIT OP_DROP OP_1 OP_SPLIT OP_NIP 0 OP_PICK 0 24 OP_NUM2BIN OP_EQUAL OP_IF OP_10 OP_PICK 68 OP_SPLIT OP_DROP 44 OP_SPLIT OP_NIP OP_1 OP_ROLL OP_DROP OP_ENDIF OP_1 OP_PICK fd OP_6 OP_PICK OP_2 OP_NUM2BIN OP_CAT 24 OP_CAT OP_2 OP_PICK OP_CAT 7514 OP_CAT OP_10 OP_PICK OP_CAT OP_5 OP_PICK 3b OP_SPLIT OP_NIP OP_CAT OP_CAT OP_2 OP_ROLL OP_DROP OP_1 OP_ROLL OP_1 OP_PICK OP_DROP OP_1 OP_PICK OP_HASH256 OP_11 OP_PICK OP_4 OP_PICK OP_8 OP_SUB OP_SPLIT OP_DROP OP_4 OP_PICK 28 OP_SUB OP_SPLIT OP_NIP OP_EQUAL OP_VERIFY OP_DROP OP_DROP OP_ENDIF OP_1 OP_NIP OP_NIP OP_NIP OP_NIP OP_NIP OP_NIP OP_NIP OP_NIP OP_NIP
+contract SuperAssetNFT {
+    public function transfer(SigHashPreimage txPreimage, bool isTransform, bytes receiveAddress, Sig senderSig, PubKey unlockKey) {
+        // Optimization: Get locking script directly
+        bytes lockingScriptSection = txPreimage[ 104 : ];
+        // Optimization: Get the scriptLen directly
+        int scriptLen = unpack(lockingScriptSection[ 1 : 3 ] + b'00'); 
+        // Optimization: Get the lockingScript directly
+        bytes lockingScript = lockingScriptSection[ 3 : 3 + scriptLen];
+        // Data appears at the beginning of the contract to allow polymorphism and predictable indexing
+        // Validate and authorize the transaction, obtain the hash160 bytes from the locking script and compare against the hash160 of the unlockKey
+        require(hash160(unlockKey) == lockingScript[ 39 : 59 ]);
+        require(checkSig(senderSig, unlockKey));  
+        int preimageLen = len(txPreimage);
+        // Allow anyone to fund this operation, commit to SIGHASH_SINGLE
+        // Signature.SIGHASH_ANYONECANPAY | Signature.SIGHASH_SINGLE | Signature.SIGHASH_FORKID;
+        require(Tx.checkPreimageOpt_(txPreimage));
+        // If this is intended to be transformed into another script or melted, then there is no need to check the assetId
+        // The owner is free to transform into any script, the responsibility for correctness is up to them
+        // Polymorphism has arrived!
+        if (!isTransform) {
+            // The only output visible to this script is to have the same Satoshis as the input, the buildingOutput contains the resulting output script
+            // Optimization: Get input value directly; Conserve Satoshi quantity from input to the output.
+            bytes buildingOutput = txPreimage[preimageLen - 52 : preimageLen - 44]; 
+            // The 'assetId' is maintained immutably as the first push data
+            bytes assetId = lockingScript[ 1 : 37 ];
+            // This is a transfer update, enforce the assetId to be set for lifetime.
+            // An NFT is only valid if it can be traced back to a coinbase minting event (36 zeroes at the beginning)
+            if (assetId == num2bin(0, 36)) {
+                // Then the assetId must be equal to the outpoint that this input is spending.
+                assetId = txPreimage[ 68 : 104 ];
+            }
+            // Optimization: Hardcode the 'fd' instead of using Util.writeVarint
+            // buildingOutput +=  b'fd' + num2bin(scriptLen, 2) + b'24' + assetId + b'7514' + Ripemd160(receiveAddress) + lockingScript[ 59 : ];
+            // More Optimization(Optional): Further optimize by changing num2bin to the raw LE hex (requires pre-compile and then manually adding it in here)
+            buildingOutput += b'fd' + num2bin(scriptLen, 2) + b'24' + assetId + b'7514' + Ripemd160(receiveAddress) + lockingScript[ 59 : ];
+            require(hash256(buildingOutput) == (txPreimage[preimageLen - 40 : preimageLen - 8]));
+        }  
+        require(true);
+    }
+}
